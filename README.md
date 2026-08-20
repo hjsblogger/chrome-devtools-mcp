@@ -847,6 +847,92 @@ To get the WebSocket endpoint from a running Chrome instance, visit `http://127.
 
 You can also run `npx chrome-devtools-mcp@latest --help` to see all available configuration options.
 
+### Connecting to TestMu AI / LambdaTest Browser Cloud
+
+Instead of launching a local Chrome, the MCP server can drive a Chrome
+instance running in the [TestMu AI](https://www.testmuai.com/) (formerly
+LambdaTest) Browser Cloud. This is useful when you don't want to install
+Chrome locally, or when you want automation runs recorded (video, console,
+network) in the TestMu AI dashboard.
+
+Under the hood this uses the same `--wsEndpoint` mechanism described above:
+TestMu AI exposes a CDP WebSocket endpoint at
+`wss://cdp.lambdatest.com/puppeteer` with session configuration (including
+your credentials) encoded in a `capabilities` query parameter. Building that
+URL by hand is awkward inside a static MCP client config, so this repo ships
+a small wrapper binary, `chrome-devtools-mcp-lambdatest`, that builds the
+endpoint from `LT_*` environment variables and forwards to the normal
+server.
+
+**Step 1:** Get your credentials from the [TestMu AI dashboard](https://accounts.lambdatest.com/security) (`LT_USERNAME` / `LT_ACCESS_KEY`).
+
+**Step 2:** Configure your MCP client:
+
+```json
+{
+  "mcpServers": {
+    "chrome-devtools": {
+      "command": "npx",
+      "args": ["chrome-devtools-mcp-lambdatest@latest"],
+      "env": {
+        "LT_USERNAME": "YOUR_LAMBDATEST_USERNAME",
+        "LT_ACCESS_KEY": "YOUR_LAMBDATEST_ACCESS_KEY",
+        "LT_BUILD": "chrome-devtools-mcp",
+        "LT_NAME": "agent session"
+      }
+    }
+  }
+}
+```
+
+Any other `chrome-devtools-mcp` flag (for example `--logFile` or
+`--experimentalPageIdRouting`) can be appended to `args` as usual; only
+`--wsEndpoint`/`--browserUrl` are reserved since they conflict with the
+generated cloud endpoint.
+
+Supported environment variables (all but the credentials are optional):
+
+| Variable             | Maps to `LT:Options`       | Notes                                                                                     |
+| -------------------- | -------------------------- | ----------------------------------------------------------------------------------------- |
+| `LT_USERNAME`        | `user`                     | Required                                                                                  |
+| `LT_ACCESS_KEY`      | `accessKey`                | Required                                                                                  |
+| `LT_BROWSER_VERSION` | top-level `browserVersion` | Defaults to `latest`                                                                      |
+| `LT_BUILD`           | `build`                    | Groups sessions in the dashboard                                                          |
+| `LT_NAME`            | `name`                     | Session name in the dashboard                                                             |
+| `LT_PLATFORM`        | `platform`                 | e.g. `Windows 10`. LambdaTest requires this capability; defaults to `Windows 10` if unset |
+| `LT_RESOLUTION`      | `resolution`               | e.g. `1366x768`                                                                           |
+| `LT_NETWORK`         | `network`                  | `true`/`false`, capture network logs                                                      |
+| `LT_VIDEO`           | `video`                    | `true`/`false`, record session video                                                      |
+| `LT_CONSOLE`         | `console`                  | `true`/`false`, capture console logs                                                      |
+| `LT_TUNNEL`          | `tunnel`                   | `true`/`false`, route through LambdaTest Tunnel to reach localhost/internal URLs          |
+| `LT_TUNNEL_NAME`     | `tunnelName`               | Name of a running LambdaTest Tunnel                                                       |
+
+If you'd rather build the `--wsEndpoint` value yourself (for example from a
+different language or CI system), the format is:
+
+```
+wss://cdp.lambdatest.com/puppeteer?capabilities=<url-encoded JSON>
+```
+
+where the JSON is:
+
+```json
+{
+  "browserName": "Chrome",
+  "browserVersion": "latest",
+  "LT:Options": {
+    "user": "YOUR_LAMBDATEST_USERNAME",
+    "accessKey": "YOUR_LAMBDATEST_ACCESS_KEY",
+    "platform": "Windows 10",
+    "build": "chrome-devtools-mcp",
+    "name": "agent session"
+  }
+}
+```
+
+and pass it via the standard `chrome-devtools-mcp` binary with
+`--wsEndpoint=<that URL>`.
+
 ## Concepts
 
 ### Concurrent sessions
