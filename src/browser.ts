@@ -20,6 +20,20 @@ import {logger, puppeteerLogger} from './utils/logger.js';
 
 let browser: Browser | undefined;
 let browserMode: 'launched' | 'connected' | undefined;
+// Set when `connected` points at a LambdaTest Browser Cloud endpoint. Unlike
+// a plain `--wsEndpoint` attach to the user's own Chrome (where we only want
+// to disconnect on shutdown, see closeBrowser()), a LambdaTest session should
+// be fully closed so it doesn't sit "Running" on their dashboard until their
+// idle timeout reaps it.
+let browserCloseOnShutdown = false;
+
+function isLambdaTestEndpoint(wsEndpoint: string): boolean {
+  try {
+    return new URL(wsEndpoint).hostname === 'cdp.lambdatest.com';
+  } catch {
+    return false;
+  }
+}
 
 function makeTargetFilter(enableExtensions = false) {
   const ignoredPrefixes = new Set(['chrome://', 'chrome-untrusted://']);
@@ -70,11 +84,13 @@ export async function ensureBrowserConnected(options: {
   };
 
   let autoConnect = false;
+  let closeOnShutdown = false;
   if (options.wsEndpoint) {
     connectOptions.browserWSEndpoint = options.wsEndpoint;
     if (options.wsHeaders) {
       connectOptions.headers = options.wsHeaders;
     }
+    closeOnShutdown = isLambdaTestEndpoint(options.wsEndpoint);
   } else if (options.browserURL) {
     connectOptions.browserURL = options.browserURL;
   } else if (channel || options.userDataDir) {
@@ -131,6 +147,7 @@ export async function ensureBrowserConnected(options: {
     // to the disconnect() path and orphan a launched Chrome).
     const connected = await puppeteer.connect(connectOptions);
     browserMode = 'connected';
+    browserCloseOnShutdown = closeOnShutdown;
     browser = connected;
   } catch (err) {
     throw new Error(
@@ -291,20 +308,24 @@ export async function ensureBrowserLaunched(
 
 /**
  * Shutdown hook for the active browser. Closes a launched browser (so the
- * Chrome subprocess is reaped) or disconnects from an attached browser (so
- * the user's Chrome instance stays alive). No-op if no browser is active or
- * the connection has already been dropped. Called from the server entrypoint
- * on stdin EOF / SIGTERM / SIGINT.
+ * Chrome subprocess is reaped) or a LambdaTest Browser Cloud session (so it
+ * doesn't sit "Running" until LambdaTest's idle timeout reaps it), or
+ * disconnects from any other attached browser (so the user's own Chrome
+ * instance stays alive). No-op if no browser is active or the connection has
+ * already been dropped. Called from the server entrypoint on stdin EOF /
+ * SIGTERM / SIGINT.
  */
 export async function closeBrowser(): Promise<void> {
   const b = browser;
   const mode = browserMode;
+  const closeOnShutdown = browserCloseOnShutdown;
   browser = undefined;
   browserMode = undefined;
+  browserCloseOnShutdown = false;
   if (!b || !b.connected) {
     return;
   }
-  if (mode === 'launched') {
+  if (mode === 'launched' || (mode === 'connected' && closeOnShutdown)) {
     await b.close().catch(err => {
       logger?.('Failed to close browser', err);
     });
