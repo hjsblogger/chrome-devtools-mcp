@@ -151,3 +151,6 @@ log.txt
 .DS_Store
 
 mcp-heap-profiles/
+
+# Lockfile intentionally not tracked
+package-lock.json
